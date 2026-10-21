@@ -1,753 +1,124 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { data as dataStore } from '#lib/stores/data';
-	import { pythonEngine } from '#lib/calculation/python-engine';
-	import { loadBundle } from '#lib/calculation/bundle-loader';
-	import { generateQuotePDF } from '#lib/utils/pdf-export';
-	import { calculateInstallments, formatInstallmentOption, formatInstallmentDetails, type InstallmentOption } from '#lib/utils/installments';
-	import { supabase } from '#lib/supabase';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import { supabase } from '#lib/supabase';
+	import { calculateProduction, SYSTEMS, type ProductionResult } from '#lib/calculation/production-engine';
+	import { Boxes, Calculator, Check, ChevronLeft, Download, Factory, GlassWater, Ruler, Save, Scissors, Sparkles } from '@lucide/svelte';
 
-	interface DrawingProps {
-		system: string;
-		width: number;
-		height: number;
-		color: string;
-		glassType: string;
-		[key: string]: unknown;
-	}
+	let customer = $state('');
+	let projectName = $state('Yeni cam balkon işi');
+	let systemCode = $state('KATLANIR_8MM');
+	let width = $state(3200), height = $state(2600), quantity = $state(1);
+	let panelMode = $state<'auto' | 'manual'>('auto'), manualPanelCount = $state(5);
+	let color = $state('Eloksal'), glassType = $state('8 mm şeffaf temperli');
+	let stockLength = $state(6500), kerf = $state(5), pricePerM2 = $state(4800);
+	let result = $state<ProductionResult | null>(null);
+	let activeTab = $state<'summary' | 'glass' | 'cuts' | 'stock' | 'accessories'>('summary');
+	let saving = $state(false), message = $state('');
+	const colors = ['Eloksal', 'Antrasit Gri', 'Siyah', 'Beyaz', 'Bronz', 'Ahşap', 'RAL Özel'];
 
-	interface CalculationResult {
-		system: string;
-		props: DrawingProps;
-		cuts: Record<string, unknown>;
-		bars: Record<string, unknown>;
-		materials: Record<string, unknown>;
-		price: number;
-		area: number;
-		image?: string;
-		warnings?: string[];
-		errors?: string[];
-	}
-
-	let step = $state(1); // 1: System, 2: Properties, 3: Dimensions, 4: Accessories, 5: Result
-	let systems = $state<Array<{ code: string; name: string }>>([]);
-	let result = $state<CalculationResult | null>(null);
-	let loading = $state(false);
-	let error = $state('');
-	let selectedInstallment = $state<InstallmentOption | null>(null);
-
-	let props = $state<DrawingProps>({
-		system: '',
-		width: 3000,
-		height: 2400,
-		color: 'Anodized',
-		glassType: '5mm'
+	$effect(() => {
+		const requested = page.url.searchParams.get('system');
+		if (requested && SYSTEMS.some((item) => item.code === requested)) selectSystem(requested);
 	});
-
-	let colors = $state<Record<string, string>>({});
-	let glassTypes = $state<Record<string, string>>({});
-
-	onMount(async () => {
-		try {
-			// Load bundle to get systems and options
-			const bundle = await loadBundle();
-
-			// Extract systems from bundle
-			if (bundle.systems && Array.isArray(bundle.systems)) {
-				systems = bundle.systems.map((s: any) => ({
-					code: s.code || s.kind || s.name,
-					name: s.name || s.code || 'Unknown'
-				}));
-			}
-
-			// Extract colors and glass types
-			if (bundle.colors) colors = bundle.colors as Record<string, string>;
-			if (bundle.glass_types) glassTypes = bundle.glass_types as Record<string, string>;
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Bundle yükleme hatası';
-		}
-	});
-
-	async function handleCalculate() {
-		if (!props.system || !props.width || !props.height) {
-			error = 'Sistem, genişlik ve yükseklik gereklidir';
-			return;
-		}
-
-		loading = true;
-		error = '';
-
-		try {
-			result = await pythonEngine.calculate({
-				system: props.system,
-				props: props
-			});
-
-			if (result.errors && result.errors.length > 0) {
-				error = result.errors.join(', ');
-			} else {
-				step = 5;
-			}
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Hesaplama hatası';
-		} finally {
-			loading = false;
-		}
+	function currentSystem() { return SYSTEMS.find((item) => item.code === systemCode) ?? SYSTEMS[0]; }
+	function displayPanelCount() { return panelMode === 'manual' ? Math.max(1, manualPanelCount) : Math.max(1, Math.ceil(width / currentSystem().panelWidth)); }
+	function selectSystem(code: string) {
+		const system = SYSTEMS.find((item) => item.code === code); if (!system) return;
+		systemCode = code; glassType = system.glassType; pricePerM2 = system.pricePerM2; result = null;
 	}
-
-	async function handleSave() {
-		if (!result) return;
-
-		loading = true;
-		error = '';
-
+	function calculate() {
+		message = '';
+		result = calculateProduction({ systemCode, width, height, quantity, panelCount: panelMode === 'manual' ? manualPanelCount : undefined, color, glassType, stockLength, kerf, pricePerM2 });
+		activeTab = 'summary';
+		requestAnimationFrame(() => document.querySelector('.results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+	}
+	async function save() {
+		if (!result) return; saving = true; message = '';
 		try {
-			const projectKey = `p-${Date.now()}`;
-			const drawingKey = `d-${Date.now()}`;
-
-			// Save project
-			await supabase.from('cb_records').insert({
-				key: projectKey,
-				kind: 'project',
-				data: {
-					name: `Proje ${new Date().toLocaleDateString('tr-TR')}`,
-					customer: 'New Customer',
-					created_at: new Date().toISOString()
-				},
-				origin: 'web',
-				deleted: false
-			});
-
-			// Save drawing
-			await supabase.from('cb_records').insert({
-				key: drawingKey,
-				kind: 'drawing',
-				data: {
-					project_key: projectKey,
-					system: result.system,
-					props: result.props,
-					cuts: result.cuts,
-					bars: result.bars,
-					materials: result.materials,
-					price: result.price,
-					area: result.area,
-					created_at: new Date().toISOString()
-				},
-				origin: 'web',
-				deleted: false
-			});
-
-			// Redirect to projects
-			await goto('/projects');
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Kayıt hatası';
-		} finally {
-			loading = false;
-		}
+			const now = Date.now(), projectKey = `p-${now}`, drawingKey = `d-${now}`;
+			const { error } = await supabase.from('cb_records').insert([
+				{ key: projectKey, kind: 'project', data: { name: projectName, customer: customer || 'Müşteri seçilmedi', status: 'Üretim hesabı hazır', created_at: new Date().toISOString() }, origin: 'web', deleted: false },
+				{ key: drawingKey, kind: 'drawing', data: { project_key: projectKey, system: result.system.code, props: result.input, production: result, cuts: result.cuts, bars: result.bars, materials: result.accessories, price: result.price, area: result.area, created_at: new Date().toISOString() }, origin: 'web', deleted: false }
+			]);
+			if (error) throw error; message = 'Proje ve üretim listesi kaydedildi.';
+		} catch (error) { message = error instanceof Error ? error.message : 'Kayıt sırasında hata oluştu.'; }
+		finally { saving = false; }
 	}
-
-	async function handlePDFExport() {
-		if (!result) return;
-
-		try {
-			await generateQuotePDF({
-				system: result.system,
-				area: result.area,
-				price: result.price,
-				width: result.props.width,
-				height: result.props.height,
-				color: result.props.color,
-				glassType: result.props.glassType,
-				materials: result.materials,
-				warnings: result.warnings,
-				createdAt: new Date().toISOString(),
-				selectedInstallment: selectedInstallment || undefined
-			});
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'PDF oluşturma hatası';
-		}
-	}
-
-	function reset() {
-		step = 1;
-		result = null;
-		error = '';
-		props = {
-			system: '',
-			width: 3000,
-			height: 2400,
-			color: 'Anodized',
-			glassType: '5mm'
-		};
-	}
+	const money = (value: number) => value.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 });
 </script>
 
-<div class="wizard-container">
-	<div class="wizard-header">
-		<h1>Yeni Çizim Sihirbazı</h1>
-		<p>Adım {step} / 5</p>
-	</div>
-
-	<div class="wizard-content">
-		{#if step === 1}
-			<!-- System Selection -->
-			<div class="step">
-				<h2>Sistem Seçin</h2>
-				<p>Tasarlamak istediğiniz sistem türünü seçin</p>
-
-				<div class="systems-grid">
-					{#each systems as system}
-						<button
-							class="system-card"
-							class:active={props.system === system.code}
-							on:click={() => {
-								props.system = system.code;
-								step = 2;
-							}}
-						>
-							<span class="system-name">{system.name}</span>
-						</button>
-					{:else}
-						<p class="empty">Sistem bulunamadı</p>
-					{/each}
-				</div>
-
-				{#if error}
-					<div class="error">{error}</div>
-				{/if}
-			</div>
-		{:else if step === 2}
-			<!-- Properties -->
-			<div class="step">
-				<h2>{systems.find(s => s.code === props.system)?.name}</h2>
-				<p>Özelliklerini ayarlayın</p>
-
-				<div class="form-group">
-					<label>Renk</label>
-					<select bind:value={props.color}>
-						{#each Object.entries(colors) as [code, name]}
-							<option value={code}>{name}</option>
-						{/each}
-					</select>
-				</div>
-
-				<div class="form-group">
-					<label>Cam Türü</label>
-					<select bind:value={props.glassType}>
-						{#each Object.entries(glassTypes) as [code, name]}
-							<option value={code}>{name}</option>
-						{/each}
-					</select>
-				</div>
-
-				<div class="button-group">
-					<button on:click={() => (step = 1)} class="btn-secondary">Geri</button>
-					<button on:click={() => (step = 3)} class="btn-primary">İleri</button>
-				</div>
-			</div>
-		{:else if step === 3}
-			<!-- Dimensions -->
-			<div class="step">
-				<h2>Ölçüler</h2>
-				<p>Genişlik ve yüksekliği girin (mm cinsinden)</p>
-
-				<div class="two-column">
-					<div class="form-group">
-						<label for="width">Genişlik (mm)</label>
-						<input
-							type="number"
-							id="width"
-							bind:value={props.width}
-							min="500"
-							max="10000"
-							step="10"
-						/>
-					</div>
-
-					<div class="form-group">
-						<label for="height">Yükseklik (mm)</label>
-						<input
-							type="number"
-							id="height"
-							bind:value={props.height}
-							min="500"
-							max="10000"
-							step="10"
-						/>
-					</div>
-				</div>
-
-				<div class="preview-dimensions">
-					<div class="preview-box" style="width: {Math.min(props.width / 30, 300)}px; height: {Math.min(props.height / 30, 300)}px;"></div>
-				</div>
-
-				<div class="button-group">
-					<button on:click={() => (step = 2)} class="btn-secondary">Geri</button>
-					<button on:click={() => (step = 4)} class="btn-primary">İleri</button>
-				</div>
-			</div>
-		{:else if step === 4}
-			<!-- Accessories -->
-			<div class="step">
-				<h2>Ek Özellikler</h2>
-				<p>Varsa ek parçaları seçin (Sonraki sürümde etkin)</p>
-
-				<p style="color: var(--color-text-light); font-size: 12px;">
-					Bu aşama gelecek versiyonda kullanılabilir olacaktır. Şimdi hesaplamaya geçebiliriz.
-				</p>
-
-				<div class="button-group">
-					<button on:click={() => (step = 3)} class="btn-secondary">Geri</button>
-					<button on:click={handleCalculate} class="btn-primary" disabled={loading}>
-						{loading ? 'Hesaplanıyor...' : 'Hesapla'}
+<svelte:head><title>Üretim Hesabı | Tayfun Yapı</title></svelte:head>
+<div class="page-shell">
+	<header class="page-header">
+		<div class="title-row">
+			<button class="back" type="button" onclick={() => history.length > 1 ? history.back() : goto('/')} title="Geri"><ChevronLeft size={20} /></button>
+			<div><span class="eyebrow">ÜRETİM MERKEZİ</span><h1>Yeni Sistem ve Kesim Listesi</h1><p>Ölçüyü girin; cam, profil, aksesuar ve fire hesabını birlikte hazırlayın.</p></div>
+		</div>
+		<span class="engine-badge"><Sparkles size={15} /> Analiz Pro motoru</span>
+	</header>
+	<section class="workspace">
+		<div class="form-panel">
+			<div class="section-title"><span>01</span><div><h2>İş bilgileri</h2><p>Müşteri ve üretilecek sistem</p></div></div>
+			<div class="field-grid two"><label>Proje adı<input bind:value={projectName} /></label><label>Müşteri<input bind:value={customer} placeholder="Müşteri adı veya firma" /></label></div>
+			<div class="system-grid">
+				{#each SYSTEMS as system}
+					<button type="button" class:active={systemCode === system.code} onclick={() => selectSystem(system.code)}>
+						<span class="system-icon">{#if system.kind === 'sliding'}<Ruler size={20} />{:else if system.kind === 'guillotine'}<Factory size={20} />{:else if system.kind === 'aldox'}<Boxes size={20} />{:else}<GlassWater size={20} />{/if}</span>
+					<strong>{system.name}</strong><small>{system.description}</small>{#if systemCode === system.code}<Check class="selected-check" size={16} />{/if}
 					</button>
-				</div>
+				{/each}
+			</div>
+			<div class="divider"></div>
+			<div class="section-title"><span>02</span><div><h2>Ölçü ve özellikler</h2><p>Milimetre cinsinden net kasa ölçüsü</p></div></div>
+			<div class="field-grid three">
+				<label>Genişlik (mm)<input type="number" bind:value={width} min="500" /></label><label>Yükseklik (mm)<input type="number" bind:value={height} min="500" /></label><label>Adet<input type="number" bind:value={quantity} min="1" /></label>
+				<label>Profil rengi<select bind:value={color}>{#each colors as item}<option>{item}</option>{/each}</select></label><label>Cam türü<input bind:value={glassType} /></label><label>Satış fiyatı (₺/m²)<input type="number" bind:value={pricePerM2} min="0" /></label>
+			</div>
+			<div class="panel-control">
+				<div><strong>Kanat hesabı</strong><small>Otomatik hesaplayabilir veya sayıyı siz belirleyebilirsiniz.</small></div>
+				<div class="segmented"><button type="button" class:active={panelMode === 'auto'} onclick={() => panelMode = 'auto'}>Otomatik</button><button type="button" class:active={panelMode === 'manual'} onclick={() => panelMode = 'manual'}>Elle</button></div>
+				{#if panelMode === 'manual'}<input class="panel-input" type="number" bind:value={manualPanelCount} min="1" aria-label="Kanat sayısı" />{/if}
+			</div>
+			<details><summary>Kesim ayarları</summary><div class="field-grid two details-body"><label>Standart profil boyu (mm)<input type="number" bind:value={stockLength} /></label><label>Testere payı (mm)<input type="number" bind:value={kerf} /></label></div></details>
+			<button class="calculate" type="button" onclick={calculate}><Calculator size={20} /> Üretim hesabını hazırla</button>
+		</div>
+		<aside class="preview-panel">
+			<div class="preview-head"><span>TEKNİK ÖN İZLEME</span><strong>{currentSystem().name}</strong></div>
+			<div class="drawing" style={`--panels:${displayPanelCount()}`}><div class="measure top">{width.toLocaleString('tr-TR')} mm</div><div class="measure side">{height.toLocaleString('tr-TR')} mm</div><div class="frame">{#each Array(displayPanelCount()) as _, index}<div class="pane"><span>{index + 1}</span></div>{/each}</div></div>
+			<div class="preview-stats"><div><span>Tahmini alan</span><strong>{(width * height * quantity / 1_000_000).toFixed(2)} m²</strong></div><div><span>Kanat</span><strong>{displayPanelCount() * quantity}</strong></div><div><span>Cam</span><strong>{glassType}</strong></div></div>
+		</aside>
+	</section>
 
-				{#if error}
-					<div class="error">{error}</div>
+	{#if result}
+		<section class="results">
+			<div class="result-header"><div><span class="eyebrow">HESAP TAMAMLANDI</span><h2>{result.system.name} üretim dosyası</h2></div><div class="actions"><button type="button" onclick={() => window.print()}><Download size={17} /> Yazdır / PDF</button><button class="primary" type="button" onclick={save} disabled={saving}><Save size={17} /> {saving ? 'Kaydediliyor' : 'Projeye kaydet'}</button></div></div>
+			{#if message}<div class:success={message.includes('kaydedildi')} class="message">{message}</div>{/if}
+			<div class="kpis"><div><span>Toplam alan</span><strong>{result.area.toFixed(2)} m²</strong></div><div><span>Cam ölçüsü</span><strong>{result.glassWidth} × {result.glassHeight}</strong><small>{result.panelCount} adet</small></div><div><span>Profil boyu</span><strong>{result.profileMeters.toFixed(2)} m</strong></div><div><span>Gerekli boy</span><strong>{result.stockBarCount} adet</strong><small>{stockLength / 1000} metrelik</small></div><div class="accent"><span>Kesim verimi</span><strong>%{result.efficiency}</strong><small>{(result.totalWaste / 1000).toFixed(2)} m fire</small></div><div class="price"><span>Tahmini satış</span><strong>{money(result.price)}</strong></div></div>
+			<div class="tabs" role="tablist">
+				<button class:active={activeTab === 'summary'} onclick={() => activeTab = 'summary'}><Calculator size={17} /> Özet</button><button class:active={activeTab === 'glass'} onclick={() => activeTab = 'glass'}><GlassWater size={17} /> Camlar</button><button class:active={activeTab === 'cuts'} onclick={() => activeTab = 'cuts'}><Scissors size={17} /> Kesim listesi</button><button class:active={activeTab === 'stock'} onclick={() => activeTab = 'stock'}><Ruler size={17} /> Boy optimizasyonu</button><button class:active={activeTab === 'accessories'} onclick={() => activeTab = 'accessories'}><Boxes size={17} /> Aksesuarlar</button>
+			</div>
+			<div class="tab-content">
+				{#if activeTab === 'summary'}
+					<div class="summary-grid"><div><h3>İş özeti</h3><dl><dt>Proje</dt><dd>{projectName}</dd><dt>Müşteri</dt><dd>{customer || 'Belirtilmedi'}</dd><dt>Sistem</dt><dd>{result.system.name}</dd><dt>Renk</dt><dd>{color}</dd><dt>Ölçü</dt><dd>{width} × {height} mm</dd></dl></div><div><h3>Üretim özeti</h3><dl><dt>Toplam kanat</dt><dd>{result.panelCount} adet</dd><dt>Kanat eni</dt><dd>{result.panelWidth} mm</dd><dt>Cam alanı</dt><dd>{result.glassArea.toFixed(2)} m²</dd><dt>Profil satırı</dt><dd>{result.cuts.length}</dd><dt>Aksesuar kalemi</dt><dd>{result.accessories.length}</dd></dl></div></div>
+				{:else if activeTab === 'glass'}
+					<div class="glass-sheet"><div class="glass-visual"><span>{result.glassWidth} mm</span><strong>CAM</strong><span>{result.glassHeight} mm</span></div><div><h3>Cam sipariş ölçüsü</h3><p>{result.panelCount} adet <strong>{result.glassWidth} × {result.glassHeight} mm</strong></p><p>{glassType} · Toplam {result.glassArea.toFixed(2)} m²</p></div></div>
+				{:else if activeTab === 'cuts'}
+					<div class="table-wrap"><table><thead><tr><th>Profil kodu</th><th>Profil / görev</th><th>Kesim</th><th>Adet</th><th>Açı</th></tr></thead><tbody>{#each result.cuts as cut}<tr><td><code>{cut.profileCode}</code></td><td><strong>{cut.profileName}</strong><small>{cut.role}</small></td><td>{cut.length} mm</td><td>{cut.quantity}</td><td>{cut.angle}</td></tr>{/each}</tbody></table></div>
+				{:else if activeTab === 'stock'}
+					<div class="stock-list">{#each result.bars as bar}<article><div class="bar-info"><strong>{bar.profileCode} · {bar.profileName}</strong><span>Boy {bar.barNo} · %{bar.efficiency} verim · {bar.waste} mm fire</span></div><div class="bar-track">{#each bar.pieces as piece}<div style={`width:${Math.max(7, piece.length / bar.stockLength * 100)}%`} title={`${piece.role}: ${piece.length} mm`}><span>{piece.length}</span></div>{/each}<i></i></div></article>{/each}</div>
+				{:else}
+					<div class="table-wrap"><table><thead><tr><th>Malzeme / aksesuar</th><th>Miktar</th><th>Birim</th></tr></thead><tbody>{#each result.accessories as item}<tr><td><strong>{item.name}</strong></td><td>{item.quantity}</td><td>{item.unit}</td></tr>{/each}</tbody></table></div>
 				{/if}
 			</div>
-		{:else if step === 5}
-			<!-- Results -->
-			<div class="step">
-				<h2>Sonuç</h2>
-
-				{#if result}
-					<div class="result-details">
-						<div class="result-row">
-							<span class="label">Sistem:</span>
-							<span class="value">{result.system}</span>
-						</div>
-						<div class="result-row">
-							<span class="label">Alan:</span>
-							<span class="value">{result.area.toFixed(2)} m²</span>
-						</div>
-						<div class="result-row">
-							<span class="label">Fiyat:</span>
-							<span class="value">₺{result.price.toLocaleString('tr-TR')}</span>
-						</div>
-
-						{#if result.warnings && result.warnings.length > 0}
-							<div class="warnings">
-								<strong>Uyarılar:</strong>
-								<ul>
-									{#each result.warnings as warning}
-										<li>{warning}</li>
-									{/each}
-								</ul>
-							</div>
-						{/if}
-
-						{#if result.materials}
-							<div class="materials">
-								<strong>Malzeme Listesi:</strong>
-								<pre>{JSON.stringify(result.materials, null, 2)}</pre>
-							</div>
-						{/if}
-					</div>
-
-					<div class="installments-section">
-						<h3>Kredi Kartı ile Ödeme Seçenekleri</h3>
-						<p style="color: var(--color-text-light); font-size: 13px; margin-bottom: 1rem;">
-							Aşağıdan tercih ettiğiniz ödeme şeklini seçin. Bu bilgi PDF teklife eklenecektir.
-						</p>
-
-						<div class="installments-grid">
-							{#each calculateInstallments(result.price).options as option (option.months)}
-								<button
-									class="installment-card"
-									class:selected={selectedInstallment?.months === option.months}
-									on:click={() => (selectedInstallment = option)}
-								>
-									<div class="installment-header">
-										{#if option.months === 1}
-											<span class="installment-title">Tek Ödeme</span>
-										{:else}
-											<span class="installment-title">{option.months} Taksit</span>
-										{/if}
-									</div>
-									<div class="installment-amount">
-										₺{option.monthlyPayment.toLocaleString('tr-TR')}
-									</div>
-									<div class="installment-details">
-										{#if option.interestRate > 0}
-											%{option.interestRate} faiz
-										{:else}
-											Faiz yok
-										{/if}
-									</div>
-									<div class="installment-total">
-										Toplam: ₺{option.totalAmount.toLocaleString('tr-TR')}
-									</div>
-								</button>
-							{/each}
-						</div>
-					</div>
-
-					<div class="button-group three-buttons">
-						<button on:click={reset} class="btn-secondary">Yeni Çizim</button>
-						<button on:click={handlePDFExport} class="btn-secondary">PDF İndir</button>
-						<button on:click={handleSave} class="btn-primary" disabled={loading}>
-							{loading ? 'Kaydediliyor...' : 'Kaydet'}
-						</button>
-					</div>
-				{/if}
-
-				{#if error}
-					<div class="error">{error}</div>
-				{/if}
-			</div>
-		{/if}
-	</div>
+		</section>
+	{/if}
 </div>
 
 <style>
-	.wizard-container {
-		max-width: 800px;
-		margin: 0 auto;
-		padding: 2rem;
-	}
-
-	.wizard-header {
-		margin-bottom: 2rem;
-		text-align: center;
-	}
-
-	.wizard-header h1 {
-		margin: 0;
-		color: var(--color-primary);
-	}
-
-	.wizard-header p {
-		margin: 0.5rem 0 0;
-		color: var(--color-text-light);
-		font-size: 12px;
-	}
-
-	.wizard-content {
-		background: white;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		padding: 2rem;
-	}
-
-	.step {
-		display: flex;
-		flex-direction: column;
-		gap: 1.5rem;
-	}
-
-	.step h2 {
-		margin: 0;
-		color: var(--color-primary);
-		font-size: 20px;
-	}
-
-	.step > p {
-		margin: 0;
-		color: var(--color-text-light);
-	}
-
-	.systems-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-		gap: 1rem;
-	}
-
-	.system-card {
-		padding: 1.5rem;
-		background: white;
-		border: 2px solid var(--color-border);
-		border-radius: 6px;
-		cursor: pointer;
-		transition: all 0.2s;
-		text-align: center;
-	}
-
-	.system-card:hover {
-		border-color: var(--color-secondary);
-		box-shadow: 0 2px 8px rgba(16, 185, 129, 0.1);
-	}
-
-	.system-card.active {
-		border-color: var(--color-secondary);
-		background: rgba(16, 185, 129, 0.05);
-	}
-
-	.system-name {
-		font-weight: 500;
-		color: var(--color-text);
-	}
-
-	.form-group {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.form-group label {
-		font-weight: 500;
-		color: var(--color-text);
-		font-size: 14px;
-	}
-
-	.form-group input,
-	.form-group select {
-		padding: 0.75rem;
-		border: 1px solid var(--color-border);
-		border-radius: 4px;
-		font-size: 14px;
-		font-family: inherit;
-	}
-
-	.form-group input:focus,
-	.form-group select:focus {
-		outline: none;
-		border-color: var(--color-secondary);
-		box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-	}
-
-	.two-column {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 1rem;
-	}
-
-	.preview-dimensions {
-		display: flex;
-		justify-content: center;
-		padding: 2rem;
-		background: #f9fafb;
-		border-radius: 4px;
-	}
-
-	.preview-box {
-		border: 2px dashed var(--color-secondary);
-		background: rgba(16, 185, 129, 0.05);
-		border-radius: 2px;
-	}
-
-	.button-group {
-		display: flex;
-		gap: 1rem;
-		justify-content: flex-end;
-	}
-
-	.button-group.three-buttons {
-		gap: 0.75rem;
-	}
-
-	.btn-primary,
-	.btn-secondary {
-		padding: 0.75rem 1.5rem;
-		border: none;
-		border-radius: 4px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all 0.2s;
-		font-size: 14px;
-	}
-
-	.btn-primary {
-		background: var(--color-secondary);
-		color: white;
-	}
-
-	.btn-primary:hover:not(:disabled) {
-		background: #059669;
-	}
-
-	.btn-primary:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.btn-secondary {
-		background: white;
-		color: var(--color-text);
-		border: 1px solid var(--color-border);
-	}
-
-	.btn-secondary:hover {
-		border-color: var(--color-text);
-		background: var(--color-border);
-	}
-
-	.error {
-		padding: 1rem;
-		background: #fee2e2;
-		color: #dc2626;
-		border-radius: 4px;
-		font-size: 14px;
-	}
-
-	.result-details {
-		background: #f9fafb;
-		padding: 1.5rem;
-		border-radius: 4px;
-		border: 1px solid var(--color-border);
-	}
-
-	.result-row {
-		display: flex;
-		justify-content: space-between;
-		padding: 0.75rem 0;
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.result-row:last-of-type {
-		border-bottom: none;
-	}
-
-	.result-row .label {
-		font-weight: 500;
-		color: var(--color-text);
-	}
-
-	.result-row .value {
-		color: var(--color-primary);
-		font-weight: 600;
-	}
-
-	.warnings,
-	.materials {
-		margin-top: 1.5rem;
-		padding-top: 1.5rem;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.warnings strong,
-	.materials strong {
-		display: block;
-		margin-bottom: 0.5rem;
-		color: var(--color-primary);
-	}
-
-	.warnings ul {
-		margin: 0;
-		padding-left: 1.5rem;
-		color: var(--color-text-light);
-	}
-
-	.warnings li {
-		margin: 0.25rem 0;
-	}
-
-	.materials pre {
-		background: white;
-		padding: 1rem;
-		border-radius: 4px;
-		overflow-x: auto;
-		font-size: 12px;
-		margin: 0;
-		border: 1px solid var(--color-border);
-	}
-
-	.empty {
-		grid-column: 1 / -1;
-		text-align: center;
-		color: var(--color-text-light);
-		padding: 2rem;
-	}
-
-	.installments-section {
-		margin-top: 2rem;
-		padding-top: 1.5rem;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.installments-section h3 {
-		margin: 0 0 0.5rem 0;
-		color: var(--color-primary);
-		font-size: 16px;
-	}
-
-	.installments-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-		gap: 1rem;
-		margin-top: 1rem;
-	}
-
-	.installment-card {
-		padding: 1rem;
-		border: 2px solid var(--color-border);
-		border-radius: 6px;
-		background: white;
-		cursor: pointer;
-		transition: all 0.2s;
-		text-align: center;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.installment-card:hover {
-		border-color: var(--color-secondary);
-		box-shadow: 0 2px 8px rgba(16, 185, 129, 0.1);
-	}
-
-	.installment-card.selected {
-		border-color: var(--color-secondary);
-		background: rgba(16, 185, 129, 0.05);
-		box-shadow: 0 2px 12px rgba(16, 185, 129, 0.15);
-	}
-
-	.installment-header {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.installment-title {
-		font-weight: 600;
-		color: var(--color-text);
-		font-size: 14px;
-	}
-
-	.installment-amount {
-		font-size: 18px;
-		font-weight: 700;
-		color: var(--color-secondary);
-	}
-
-	.installment-details {
-		font-size: 12px;
-		color: var(--color-text-light);
-	}
-
-	.installment-total {
-		font-size: 11px;
-		color: var(--color-text-light);
-		border-top: 1px solid var(--color-border);
-		padding-top: 0.5rem;
-	}
-
-	@media (max-width: 768px) {
-		.wizard-container {
-			padding: 1rem;
-		}
-
-		.wizard-content {
-			padding: 1rem;
-		}
-
-		.two-column {
-			grid-template-columns: 1fr;
-		}
-
-		.button-group {
-			flex-direction: column;
-		}
-
-		.btn-primary,
-		.btn-secondary {
-			width: 100%;
-		}
-
-		.systems-grid {
-			grid-template-columns: 1fr;
-		}
-	}
+	.page-shell{max-width:1500px;margin:0 auto;padding:28px 30px 60px}.page-header,.title-row,.result-header,.actions,.section-title,.panel-control,.engine-badge{display:flex;align-items:center}.page-header{justify-content:space-between;margin-bottom:22px}.title-row{gap:12px}.back{width:40px;height:40px;border:1px solid #dfe3e8;background:white;border-radius:7px;display:grid;place-items:center;cursor:pointer}.eyebrow{display:block;color:#0f7c80;font-size:11px;font-weight:800;letter-spacing:1px}.page-header h1,.result-header h2{margin:2px 0 0;font-size:25px;letter-spacing:0}.page-header p{margin:3px 0 0;color:#6b7280}.engine-badge{gap:7px;padding:8px 11px;background:#e9f7f5;color:#086c70;border-radius:6px;font-weight:700;font-size:12px}.workspace{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(340px,.75fr);gap:18px}.form-panel,.preview-panel,.results{background:#fff;border:1px solid #dfe3e8;border-radius:8px}.form-panel{padding:22px}.section-title{gap:11px;margin-bottom:15px}.section-title>span{width:32px;height:32px;display:grid;place-items:center;background:#123b47;color:#fff;border-radius:6px;font-size:11px;font-weight:800}.section-title h2{font-size:16px;margin:0}.section-title p{font-size:12px;color:#7a8491;margin:1px 0 0}.field-grid{display:grid;gap:12px}.field-grid.two{grid-template-columns:1fr 1fr}.field-grid.three{grid-template-columns:repeat(3,1fr)}label{display:flex;flex-direction:column;gap:5px;color:#4b5563;font-size:12px;font-weight:700}input,select{height:41px;border:1px solid #d6dbe1;border-radius:5px;padding:0 11px;background:#fff;color:#17212b;font:inherit;font-weight:500}input:focus,select:focus{outline:2px solid #99d7d4;border-color:#0f8b8d}.system-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:16px}.system-grid button{position:relative;min-height:105px;padding:11px;border:1px solid #dfe3e8;border-radius:6px;background:#fafbfc;text-align:left;cursor:pointer;color:#26313b}.system-grid button:hover,.system-grid button.active{border-color:#0f8b8d;background:#f0fbfa}.system-icon{width:34px;height:34px;display:grid;place-items:center;background:#e6f3f3;color:#0f7c80;border-radius:6px;margin-bottom:8px}.system-grid strong,.system-grid small{display:block}.system-grid strong{font-size:13px}.system-grid small{font-size:10px;color:#7a8491;line-height:1.3;margin-top:2px}.selected-check{position:absolute;right:8px;top:8px;color:#0f8b8d}.divider{height:1px;background:#edf0f2;margin:22px 0}.panel-control{gap:14px;padding:12px;margin-top:14px;background:#f7f8f9;border:1px solid #e3e7eb;border-radius:6px}.panel-control>div:first-child{margin-right:auto}.panel-control strong,.panel-control small{display:block}.panel-control small{color:#7a8491;font-size:11px}.segmented{display:flex;background:#e7eaed;padding:3px;border-radius:5px}.segmented button{height:31px;padding:0 14px;border:0;background:transparent;border-radius:4px;cursor:pointer;font-weight:700;color:#66707c}.segmented button.active{background:white;color:#0f7c80;box-shadow:0 1px 3px #0001}.panel-input{width:70px}details{margin-top:12px;border:1px solid #e1e5e9;border-radius:6px}summary{padding:12px;font-weight:700;cursor:pointer}.details-body{padding:0 12px 12px}.calculate{width:100%;height:48px;margin-top:15px;border:0;border-radius:6px;background:#ec942f;color:white;font-weight:800;display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;font-size:14px}.preview-panel{padding:18px;position:sticky;top:18px;height:fit-content}.preview-head{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#78838f}.preview-head strong{color:#173b46;font-size:13px}.drawing{height:330px;margin:34px 23px 24px;position:relative;display:grid;place-items:center}.frame{width:100%;height:82%;display:grid;grid-template-columns:repeat(var(--panels),1fr);border:8px solid #365966;background:#dff1f2;box-shadow:0 8px 20px #15343c22}.pane{border-right:4px solid #52747c;background:linear-gradient(135deg,#e9f8fa,#c9e5e8);display:grid;place-items:center;min-width:0}.pane:last-child{border-right:0}.pane span{font-size:11px;color:#739099}.measure{position:absolute;color:#52616c;font-size:11px;font-weight:700}.measure.top{top:0;left:0;right:0;text-align:center;border-bottom:1px solid #aebac2;padding-bottom:5px}.measure.side{left:-31px;top:50%;transform:rotate(-90deg);white-space:nowrap}.preview-stats{border-top:1px solid #e7eaed;padding-top:15px;display:grid;grid-template-columns:1fr 1fr;gap:12px}.preview-stats div:last-child{grid-column:1/-1}.preview-stats span,.preview-stats strong{display:block}.preview-stats span{font-size:10px;color:#7b8691}.preview-stats strong{font-size:13px;color:#1e2d36;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.results{margin-top:18px;padding:22px;scroll-margin-top:20px}.result-header{justify-content:space-between}.result-header h2{font-size:20px}.actions{gap:8px}.actions button{height:38px;padding:0 13px;display:flex;align-items:center;gap:7px;border:1px solid #d9dee3;border-radius:5px;background:white;cursor:pointer;font-weight:700}.actions button.primary{background:#0f7c80;color:white;border-color:#0f7c80}.message{margin-top:12px;padding:10px;background:#fff5db;color:#8a5b00;border-radius:5px}.message.success{background:#eaf8f0;color:#147541}.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:18px 0}.kpis>div{padding:13px;border:1px solid #e1e5e9;border-radius:6px;min-width:0}.kpis span,.kpis strong,.kpis small{display:block}.kpis span{font-size:10px;color:#7a8491}.kpis strong{font-size:17px;color:#1b2933;margin-top:3px;white-space:nowrap}.kpis small{font-size:10px;color:#78838f}.kpis .accent{border-left:3px solid #0f8b8d}.kpis .price{background:#173b46;border-color:#173b46}.kpis .price span,.kpis .price strong{color:white}.tabs{display:flex;gap:2px;border-bottom:1px solid #dfe3e8;overflow-x:auto}.tabs button{height:44px;padding:0 15px;border:0;border-bottom:3px solid transparent;background:white;color:#65717c;display:flex;align-items:center;gap:7px;white-space:nowrap;cursor:pointer;font-weight:700}.tabs button.active{color:#0f7c80;border-bottom-color:#0f7c80}.tab-content{padding-top:18px}.summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.summary-grid>div{padding:16px;background:#f7f9fa;border-radius:6px}.summary-grid h3,.glass-sheet h3{margin:0 0 12px;font-size:14px}dl{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0}dt{color:#78838f}dd{margin:0;text-align:right;font-weight:700}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:1px solid #e7eaed;text-align:left}th{font-size:10px;color:#68737e;text-transform:uppercase;background:#f6f8f9}td strong,td small{display:block}td small{font-size:10px;color:#7a8491}code{font-weight:700;color:#0f6f72}.glass-sheet{display:flex;align-items:center;gap:28px;padding:20px;background:#f4f8f8;border-radius:6px}.glass-visual{width:220px;aspect-ratio:1.45;border:6px solid #40636c;background:linear-gradient(135deg,#eafafa,#bcdde2);display:grid;place-items:center;position:relative}.glass-visual strong{color:#668b94}.glass-visual span{position:absolute;font-size:10px}.glass-visual span:first-child{top:-22px}.glass-visual span:last-child{right:-48px;transform:rotate(90deg)}.stock-list{display:grid;gap:12px}.stock-list article{padding:13px;border:1px solid #e0e5e8;border-radius:6px}.bar-info{display:flex;justify-content:space-between;gap:12px;margin-bottom:9px}.bar-info span{font-size:11px;color:#6c7781}.bar-track{height:34px;display:flex;background:#e8ecee;border:1px solid #ccd4d8;position:relative;overflow:hidden}.bar-track div{height:100%;min-width:34px;background:#42a5a5;border-right:2px solid white;color:white;display:grid;place-items:center;font-size:9px}.bar-track i{flex:1;background:repeating-linear-gradient(45deg,#e5e8ea,#e5e8ea 6px,#f4f5f6 6px,#f4f5f6 12px)}
+	@media(max-width:1100px){.workspace{grid-template-columns:1fr}.preview-panel{position:static}.system-grid{grid-template-columns:repeat(3,1fr)}.kpis{grid-template-columns:repeat(3,1fr)}}
+	@media(max-width:720px){.page-shell{padding:16px 12px 90px}.page-header{align-items:flex-start}.page-header h1{font-size:20px}.page-header p,.engine-badge{display:none}.form-panel,.results{padding:15px}.system-grid{grid-template-columns:1fr 1fr}.field-grid.two,.field-grid.three{grid-template-columns:1fr 1fr}.panel-control{align-items:flex-start;flex-wrap:wrap}.panel-control>div:first-child{width:100%}.drawing{height:250px}.result-header{align-items:flex-start;gap:12px;flex-direction:column}.actions{width:100%}.actions button{flex:1;justify-content:center}.kpis{grid-template-columns:1fr 1fr}.tabs{margin:0 -15px;padding:0 8px}.summary-grid{grid-template-columns:1fr}.glass-sheet{flex-direction:column;align-items:flex-start}.bar-info{flex-direction:column;gap:2px}.preview-panel{display:none}}
+	@media(max-width:420px){.field-grid.two,.field-grid.three{grid-template-columns:1fr}.system-grid{grid-template-columns:1fr 1fr}.system-grid button{min-height:98px}.kpis{grid-template-columns:1fr 1fr}.kpis strong{font-size:15px}}
+	@media print{.page-header,.workspace,.tabs,.actions,.message{display:none}.page-shell{padding:0}.results{border:0;margin:0;padding:0}.tab-content{display:block}.kpis{grid-template-columns:repeat(3,1fr)}}
 </style>
