@@ -10,7 +10,14 @@
 	function filtered(){const q=query.toLocaleLowerCase('tr-TR');return rows.filter(r=>`${r.data?.name||''} ${r.data?.phone||''} ${r.data?.email||''}`.toLocaleLowerCase('tr-TR').includes(q))}
 </script>
 <svelte:head><title>Müşteriler | Tayfun Yapı</title></svelte:head>
-<div class="page"><header><div><span>SATIŞ</span><h1>Müşteriler</h1><p>Müşteri kartları, iletişim bilgileri ve bağlı işler.</p></div><button onclick={()=>showForm=!showForm}>{#if showForm}<X size={18}/>{else}<Plus size={18}/>{/if}{showForm?'Kapat':'Müşteri Ekle'}</button></header>
+<div class="page"><header><div><span>SATIŞ</span><h1>Müşteriler</h1><p>Müşteri kartları, iletişim bilgileri ve bağlı işler.</p></div><button onclick={() => (showForm = !showForm)}>
+	{#if showForm}
+		<X size={18}/>
+	{:else}
+		<Plus size={18}/>
+	{/if}
+	{showForm ? 'Kapat' : 'Müşteri Ekle'}
+</button></header>
 	{#if showForm}<section class="form"><h2>Yeni müşteri kartı</h2><div class="grid"><label>Ad soyad / firma<input bind:value={form.name} placeholder="Müşteri adı"/></label><label>Telefon<input bind:value={form.phone} placeholder="0 5xx xxx xx xx"/></label><label>E-posta<input type="email" bind:value={form.email}/></label><label>İl / ilçe<input bind:value={form.city} placeholder="Edremit, Balıkesir"/></label><label class="wide">Adres<input bind:value={form.address}/></label><label class="wide">Not<textarea bind:value={form.notes}></textarea></label></div>{#if error}<p class="error">{error}</p>{/if}<button class="save" onclick={save} disabled={saving}>{saving?'Kaydediliyor':'Müşteri kartını kaydet'}</button></section>{/if}
 	<section class="summary"><div><UserRound/><span>Toplam müşteri<strong>{rows.length}</strong></span></div><div><Building2/><span>Aktif kayıt<strong>{rows.filter(r=>!r.deleted).length}</strong></span></div></section>
 	<label class="search"><Search size={17}/><input bind:value={query} placeholder="Müşteri, telefon veya e-posta ara"/></label>
