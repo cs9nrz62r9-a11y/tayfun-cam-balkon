@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import favicon from '#lib/assets/favicon.svg';
+	import AppSidebar from '#lib/components/AppSidebar.svelte';
 	import { auth } from '#lib/stores/auth';
+	import { isAuthenticated } from '#lib/stores/auth';
 	import { data } from '#lib/stores/data';
 	import type { LayoutProps } from './$types';
 
@@ -48,8 +50,10 @@
 		font-size: 14px;
 		line-height: 1.5;
 		color: var(--color-text);
-		background: #ffffff;
+		background: #f4f6f8;
 	}
+
+	:global(html, body) { min-height: 100%; }
 
 	:global(*) {
 		box-sizing: border-box;
@@ -58,10 +62,30 @@
 	@keyframes spin {
 		to { transform: rotate(360deg); }
 	}
+
+	.app-shell {
+		display: flex;
+		min-height: 100dvh;
+		background: #f4f6f8;
+	}
+
+	.app-content {
+		flex: 1;
+		min-width: 0;
+		min-height: 100dvh;
+		overflow-x: hidden;
+	}
 </style>
 
 {#if initialized}
-	{@render children()}
+	{#if $isAuthenticated}
+		<div class="app-shell">
+			<AppSidebar />
+			<main class="app-content">{@render children()}</main>
+		</div>
+	{:else}
+		{@render children()}
+	{/if}
 {:else}
 	<div style="display: flex; align-items: center; justify-content: center; height: 100vh;">
 		<div style="text-align: center;">
