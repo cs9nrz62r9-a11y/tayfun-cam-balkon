@@ -20,6 +20,8 @@
 	$effect(() => {
 		const requested = page.url.searchParams.get('system');
 		if (requested && SYSTEMS.some((item) => item.code === requested)) selectSystem(requested);
+		const requestedCustomer = page.url.searchParams.get('customer');
+		if (requestedCustomer && !customer) customer = requestedCustomer;
 	});
 	function currentSystem() { return SYSTEMS.find((item) => item.code === systemCode) ?? SYSTEMS[0]; }
 	function displayPanelCount() { return panelMode === 'manual' ? Math.max(1, manualPanelCount) : Math.max(1, Math.ceil(width / currentSystem().panelWidth)); }
@@ -38,7 +40,7 @@
 		try {
 			const now = Date.now(), projectKey = `p-${now}`, drawingKey = `d-${now}`;
 			const { error } = await supabase.from('cb_records').insert([
-				{ key: projectKey, kind: 'project', data: { name: projectName, customer: customer || 'Müşteri seçilmedi', status: 'Üretim hesabı hazır', created_at: new Date().toISOString() }, origin: 'web', deleted: false },
+				{ key: projectKey, kind: 'project', data: { name: projectName, customer: customer || 'Müşteri seçilmedi', status: 'OLCULDU', system: result.system.code, system_name: result.system.name, width: result.input.width, height: result.input.height, area: result.area, price: result.price, created_at: new Date().toISOString() }, origin: 'web', deleted: false },
 				{ key: drawingKey, kind: 'drawing', data: { project_key: projectKey, system: result.system.code, props: result.input, production: result, cuts: result.cuts, bars: result.bars, materials: result.accessories, price: result.price, area: result.area, created_at: new Date().toISOString() }, origin: 'web', deleted: false }
 			]);
 			if (error) throw error; message = 'Proje ve üretim listesi kaydedildi.';

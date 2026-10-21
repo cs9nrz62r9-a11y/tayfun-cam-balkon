@@ -4,16 +4,18 @@
 	import { goto } from '$app/navigation';
 	import {
 		BarChart3,
+		CalendarDays,
 		ChevronLeft,
 		ChevronRight,
+		ClipboardList,
 		FileText,
 		FolderKanban,
 		House,
 		Image,
 		Layers3,
 		LogOut,
-		Menu,
 		Palette,
+		PackageSearch,
 		Settings,
 		Users
 	} from '@lucide/svelte';
@@ -23,14 +25,16 @@
 
 	const items = [
 		{ label: 'Ana Sayfa', href: '/', icon: House },
-		{ label: 'Projeler', href: '/projects', icon: FolderKanban },
-		{ label: 'Yeni Çizim', href: '/wizard', icon: Palette },
-		{ label: 'Tasarımlarım', href: '/designs', icon: Image },
+		{ label: 'Montaj Planı', href: '/montage', icon: CalendarDays },
 		{ label: 'Müşteriler', href: '/customers', icon: Users },
+		{ label: 'İşler', href: '/projects', icon: FolderKanban },
 		{ label: 'Teklifler', href: '/teklif', icon: FileText },
+		{ label: 'Yeni Üretim Hesabı', href: '/wizard', icon: Palette },
+		{ label: 'Ürün Kataloğu', href: '/systems', icon: ClipboardList },
+		{ label: 'Stok İhtiyacı', href: '/stock', icon: PackageSearch },
+		{ label: 'Tasarımlarım', href: '/designs', icon: Image },
 		{ label: 'Şablonlar', href: '/templates', icon: Layers3 },
-		{ label: 'Sistemler', href: '/systems', icon: Menu },
-		{ label: 'Analitikler', href: '/analytics', icon: BarChart3 },
+		{ label: 'Raporlar', href: '/analytics', icon: BarChart3 },
 		{ label: 'Ayarlar', href: '/settings', icon: Settings }
 	];
 
