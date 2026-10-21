@@ -1,36 +1,44 @@
 import { writable, derived } from 'svelte/store';
-import { supabase } from '../supabase';
-import type { Session } from '@supabase/supabase-js';
 
-const session = writable<Session | null>(null);
-export const user = derived(session, $session => $session?.user ?? null);
-export const isAuthenticated = derived(session, $session => $session !== null);
+type AppUser = {
+	id: string;
+	email: string;
+};
+
+const currentUser = writable<AppUser | null>(null);
+export const user = derived(currentUser, ($user) => $user);
+export const isAuthenticated = derived(currentUser, ($user) => $user !== null);
 
 export const auth = {
-	session,
+	session: currentUser,
 	user,
 	isAuthenticated,
 	async initialize() {
-		const { data } = await supabase.auth.getSession();
-		session.set(data.session);
+		const response = await fetch('/api/auth/session');
+		if (!response.ok) {
+			currentUser.set(null);
+			return;
+		}
 
-		// Listen for auth changes
-		const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-			session.set(newSession);
-		});
-
-		return () => listener?.subscription.unsubscribe();
+		const data = await response.json();
+		currentUser.set(data.user ?? null);
 	},
 	async signInWithPassword(email: string, password: string) {
-		const { error } = await supabase.auth.signInWithPassword({ email, password });
-		if (error) throw error;
+		const response = await fetch('/api/auth/login', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ email, password })
+		});
+		const data = await response.json();
+
+		if (!response.ok) throw new Error(data.message ?? 'Giriş başarısız');
+		currentUser.set({ id: 'app-admin', email: data.email });
 	},
-	async signUp(email: string, password: string) {
-		const { error } = await supabase.auth.signUp({ email, password });
-		if (error) throw error;
+	async signUp() {
+		throw new Error('Yeni kullanıcı kaydı yönetici tarafından yapılır');
 	},
 	async signOut() {
-		const { error } = await supabase.auth.signOut();
-		if (error) throw error;
+		await fetch('/api/auth/logout', { method: 'POST' });
+		currentUser.set(null);
 	}
 };

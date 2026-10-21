@@ -59,7 +59,6 @@
 				<p>Web Tabanlı Yönetim Sistemi</p>
 				<div class="auth-buttons">
 					<a href="/auth/login" class="btn btn-primary">Giriş Yap</a>
-					<a href="/auth/signup" class="btn btn-secondary">Kayıt Ol</a>
 				</div>
 			</div>
 		</div>

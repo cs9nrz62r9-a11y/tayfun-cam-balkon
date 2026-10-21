@@ -2,7 +2,7 @@
 	import { auth } from '#lib/stores/auth';
 	import { goto } from '$app/navigation';
 
-	let email = $state('');
+	let email = $state('tayfuunyapi@gmail.com');
 	let password = $state('');
 	let loading = $state(false);
 	let error = $state('');
@@ -64,9 +64,6 @@
 			</button>
 		</form>
 
-		<p class="signup-link">
-			Hesabınız yok mu? <a href="/auth/signup">Kayıt olun</a>
-		</p>
 	</div>
 </div>
 
