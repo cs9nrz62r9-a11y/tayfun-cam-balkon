@@ -1,13 +1,13 @@
 {
-  "name": "Tayfun Yapı Cam Balkon",
-  "short_name": "Tayfun Yapı",
-  "description": "Cam balkon satış, ölçü, üretim, kesim ve montaj yönetimi",
+  "name": "Tayfun Cam Balkon - Web Uygulaması",
+  "short_name": "Tayfun Cam Balkon",
+  "description": "SvelteKit 5 web application for glass balcony design and calculations",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "any",
-  "theme_color": "#172328",
-  "background_color": "#f3f6f5",
+  "orientation": "portrait-primary",
+  "theme_color": "#10b981",
+  "background_color": "#ffffff",
   "icons": [
     {
       "src": "/logo-192.png",
@@ -45,9 +45,9 @@
   "categories": ["productivity", "business"],
   "shortcuts": [
     {
-      "name": "Yeni İş Başlat",
-      "short_name": "Yeni İş",
-      "description": "Ölçü, sistem ve üretim hesabı oluştur",
+      "name": "Yeni Çizim",
+      "short_name": "Yeni Çizim",
+      "description": "Hızlı cam balkon tasarımı oluştur",
       "url": "/wizard",
       "icons": [
         {
@@ -58,10 +58,10 @@
       ]
     },
     {
-      "name": "Montaj Planı",
-      "short_name": "Montaj",
-      "description": "Planlanan montaj işlerini görüntüle",
-      "url": "/montage",
+      "name": "Tasarımlarım",
+      "short_name": "Tasarımlarım",
+      "description": "Önceki tasarımları görüntüle ve düzenle",
+      "url": "/designs",
       "icons": [
         {
           "src": "/icon-96.png",
